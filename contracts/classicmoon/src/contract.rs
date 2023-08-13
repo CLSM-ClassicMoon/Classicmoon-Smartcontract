@@ -111,7 +111,7 @@ pub fn execute(
             }
 
             let to_addr = if let Some(to_addr) = to {
-                Some(deps.api.addr_validate(&to_addr).unwrap())
+                Some(deps.api.addr_validate(&to_addr)?)
             } else {
                 None
             };
@@ -164,7 +164,7 @@ pub fn receive_cw20(
             }
 
             let to_addr = if let Some(to_addr) = to {
-                Some(deps.api.addr_validate(&to_addr).unwrap())
+                Some(deps.api.addr_validate(&to_addr.as_str())?)
             } else {
                 None
             };
