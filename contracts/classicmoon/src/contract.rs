@@ -34,21 +34,27 @@ const COMMISSION_RATE: u64 = 2; // commission rate = 0.2%
 // must condition: DISTRIBUTE_RATE + MARKETING_RATE < 1000
 const MARKETING_RATE: u64 = 500; // marketing rate = 50%
 // const DISTRIBUTE_RATE: u64 = 500; // distribute rate = 50%
+const SWAP_FEE: u64 = 2; // 0.2%
 
 const VESTING_DURATION: u64 = 30 * 86400; // 1 month
 const VESTING_COUNT_LIMIT: u64 = 40; // 40 months
+const VESTING_COUNT_LIMIT20: u64 = 20; // 20 months
 const VESTING_AMOUNT: Uint128 = Uint128::new(113_900_000_000_000_000); // vesting amount = 113.9 billion
+const VESTING_AMOUNT_MARKET: Uint128 = Uint128::new(11_900_000_000_000_000); // vesting amount = 11.90 billion
+const VESTING_AMOUNT_MINIGAME: Uint128 = Uint128::new(5_100_000_000_000_000); // vesting amount = 5.10 billion
+const VESTING_AMOUNT_TEAM: Uint128 = Uint128::new(10_200_000_000_000_000); // vesting amount = 10.20 billion
 const AUTOBURN_DURATION: u64 = 10 * 86400; // 10 days
-const CIRCULATING_LIMIT: Uint128 = Uint128::new(10_000_000_000_000_000); // circulating_supply_limit = 10 billion
+const CIRCULATING_LIMIT: Uint128 = Uint128::new(1_000_000_000_000_000); // circulating_supply_limit = 1 billion
 const REMAIN_ABOVE_RATE: u64 = 500; // burn above rate = 50%
 const REMAIN_BELOW_RATE: u64 = 990; // burn below rate = 1%
 
 const BURN_WALLET: &str = "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"; // burn-listing wallet
 const MARKET_WALLET: &str = "terra1rf76ceh3u0592yd490gucg9kfkvtye3zym95vk"; // marketing-listing wallet
-const TERSURY_WALLET: &str = "terra1675g95dpcxulmwgyc0hvf66uxn7vcrr5az2vuk"; // TODO treasury wallet(now prism)
+const TEAM_WALLET: &str = "terra1nld4lnh240k0dmjdk5jkasvsuqeaf254etxzrk"; // team wallet
+const MINIGAME_WALLET: &str = "terra1zxt0qz44dsnerr20wesugfctd5f9mf8tzpdkx5"; // minigame wallet
+const TREASURY_WALLET: &str = "terra1pza7mqx904lwu8dt9zcxw3xcfqf5k5xlx8n5el"; // TODO treasury wallet(now prism)
 
 const TOKEN_CONTRACT: &str = "terra1rt0h5502et0tsx7tssl0c8psy3n5lxjvthe3jcgc9d66070zvh7qegu7rk"; // TODO token contract
-const START_TIMESTAMP: u64 = 1689809000; // TODO token contract deployed timestamp
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -60,6 +66,7 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     let classicmoon_info: &ClassicmoonInfoRaw = &ClassicmoonInfoRaw {
+        start_timestamp: env.block.time.seconds(),     
         contract_addr: deps.api.addr_canonicalize(env.contract.address.as_str())?,
         liquidity_k_value: Uint128::zero(),
         vesting_epoch: 0,
@@ -164,7 +171,7 @@ pub fn receive_cw20(
             }
 
             let to_addr = if let Some(to_addr) = to {
-                Some(deps.api.addr_validate(&to_addr.as_str())?)
+                Some(deps.api.addr_validate(&to_addr)?)
             } else {
                 None
             };
@@ -381,7 +388,16 @@ pub fn swap(
         return Err(ContractError::AssetMismatch {});
     }
 
-    let offer_amount = offer_asset.amount;
+    let mut is_native_token = false;
+    let mut fee: Uint128 = Uint128::zero();
+    let mut offer_amount = offer_asset.amount;
+    if let AssetInfo::NativeToken { .. } = offer_asset.info.clone() {
+        is_native_token = true;
+        fee = offer_amount * Decimal::permille(SWAP_FEE);
+        offer_amount -= fee;
+
+        fee = fee * Decimal::permille(MARKETING_RATE);
+    }
     let (return_amount, spread_amount, commission_amount) =
         compute_swap(offer_pool.amount, ask_pool.amount, offer_amount)?;
 
@@ -410,17 +426,31 @@ pub fn swap(
         messages.push(return_asset.clone().into_msg(&deps.querier, receiver.clone())?);
     }
     
-    // 0.2% fee is ask_pool.info token
-    let marketing_asset = Asset {
-        info: ask_pool.info.clone(),
-        amount: commission_amount * Decimal::permille(MARKETING_RATE),
-    };
+    // 0.2% fee is native token
+    match is_native_token {
+        true => {
+            let marketing_asset = Asset {
+                info: offer_pool.info.clone(),
+                amount: fee,
+            };
     if !marketing_asset.amount.is_zero() {
         messages.push(marketing_asset.clone().into_msg(&deps.querier, Addr::unchecked(MARKET_WALLET))?);
+        }
     }
+        false => {
+            let marketing_asset = Asset {
+                info: ask_pool.info.clone(),
+                amount: commission_amount * Decimal::permille(MARKETING_RATE),
+            };
+            if !marketing_asset.amount.is_zero() {
+                messages.push(marketing_asset.clone().into_msg(&deps.querier, Addr::unchecked(MARKET_WALLET))?);
+            }
+        }
+     };
 
     // vesting
-    if (classicmoon_info.vesting_epoch < VESTING_COUNT_LIMIT) & (env.block.time.seconds() > START_TIMESTAMP + VESTING_DURATION * (classicmoon_info.vesting_epoch + 1)) {
+    if (classicmoon_info.vesting_epoch < VESTING_COUNT_LIMIT) && (env.block.time.seconds() > classicmoon_info.start_timestamp + VESTING_DURATION * (classicmoon_info.vesting_epoch + 1)) {
+     // POOL CONTRACT
         let offer_new_amount;
         let ask_new_amount;
 
@@ -451,34 +481,53 @@ pub fn swap(
         messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: TOKEN_CONTRACT.to_string(),
             msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
-                owner: TERSURY_WALLET.to_string(),
+                owner: TREASURY_WALLET.to_string(),
                 recipient: env.contract.address.to_string(),
                 amount: VESTING_AMOUNT,
             })?,
             funds: vec![],
         }));
+        
+        if classicmoon_info.vesting_epoch < VESTING_COUNT_LIMIT20 {
+            // Marketing & Listing, Team, Minigame
+            messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: TOKEN_CONTRACT.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
+                    owner: TREASURY_WALLET.to_string(),
+                    recipient: MARKET_WALLET.to_string(),
+                    amount: VESTING_AMOUNT_MARKET,
+                })?,
+                funds: vec![],
+            }));
+            messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: TOKEN_CONTRACT.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
+                    owner: TREASURY_WALLET.to_string(),
+                    recipient: TEAM_WALLET.to_string(),
+                    amount: VESTING_AMOUNT_TEAM,
+                })?,
+                funds: vec![],
+            }));
+            
+            messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: TOKEN_CONTRACT.to_string(),
+                msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
+                    owner: TREASURY_WALLET.to_string(),
+                    recipient: MINIGAME_WALLET.to_string(),
+                    amount: VESTING_AMOUNT_MINIGAME,
+                })?,
+                funds: vec![],
+            }));
+        }
     }
     // autoburn
-    if env.block.time.seconds() > START_TIMESTAMP + AUTOBURN_DURATION * (classicmoon_info.autoburn_epoch + 1) {
-        // circulating supply is above 10 billion, the burn percentage is 50%
-        // circulating supply is below 10 billion, the burn percentage is 1%
-        let total_supply = query_token_info(
-            &deps.querier, 
-            Addr::unchecked(TOKEN_CONTRACT),
-        )?.total_supply;
-
-        let treasury_bal = query_token_balance(
-            &deps.querier, 
-            Addr::unchecked(TOKEN_CONTRACT), 
-            Addr::unchecked(TERSURY_WALLET),
-        )?;
-
-        let burn_bal = query_token_balance(
-            &deps.querier, 
-            Addr::unchecked(TOKEN_CONTRACT),
-            Addr::unchecked(BURN_WALLET),
-        )?;
-
+    if env.block.time.seconds() > classicmoon_info.start_timestamp + AUTOBURN_DURATION * (classicmoon_info.autoburn_epoch + 1) {
+        // circulating supply is above 1 billion, the burn percentage is 50%
+        // circulating supply is below 1 billion, the burn percentage is 1%
+        let total_supply = query_token_info(&deps.querier, Addr::unchecked(TOKEN_CONTRACT))?.total_supply;
+        let treasury_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(TREASURY_WALLET))?;
+        let burn_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(BURN_WALLET))?;
+        
         let circulating_supply = total_supply - treasury_bal - burn_bal;
 
         let remain_percent;
@@ -522,6 +571,14 @@ pub fn swap(
             contract_addr: TOKEN_CONTRACT.to_string(),
             msg: to_binary(&Cw20ExecuteMsg::Transfer {
                 recipient: BURN_WALLET.to_string(),
+                amount: burn_amount,
+            })?,
+            funds: vec![],
+        }));
+        
+        messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: TOKEN_CONTRACT.to_string(),
+            msg: to_binary(&Cw20ExecuteMsg::Burn {
                 amount: burn_amount,
             })?,
             funds: vec![],
