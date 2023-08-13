@@ -41,7 +41,7 @@ pub fn instantiate(
     let mint = match msg.mint {
         Some(m) => {
             Some(MinterData {
-                minter: deps.api.addr_validate(&m.minter).unwrap(),
+                minter: deps.api.addr_validate(&m.minter)?,
                 cap: m.cap,
             })
         }
