@@ -5,9 +5,7 @@ use crate::state::CLASSICMOON_INFO;
 use cosmwasm_std::entry_point;
 
 use cosmwasm_std::{
-    from_binary, to_binary, Addr, Binary, CosmosMsg, Decimal, Decimal256, Deps,
-    DepsMut, Env, MessageInfo, Response, StdResult, Uint128,
-    Uint256, WasmMsg,
+    from_binary, to_binary, Addr, Binary, CosmosMsg, Decimal, Decimal256, Deps, DepsMut, Env, MessageInfo, Response, StdResult, Uint128, Uint256, WasmMsg,
 };
 
 use classic_bindings::{TerraMsg, TerraQuery};
