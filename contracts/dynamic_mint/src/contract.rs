@@ -35,13 +35,13 @@ const CLASSICMOON_COLLECTION: &str =
 const FURY_COLLECTION: &str = "terra1g7we2dvzgyfyh39zg44n0rlyh9xh4ym9z0wut7"; // fury nft collection
 
 const BURN_WALLET: &str = "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"; // burn-listing wallet
-const TERSURY_WALLET: &str = "terra1675g95dpcxulmwgyc0hvf66uxn7vcrr5az2vuk"; // TODO treasury wallet(now prism)
+const TREASURY_WALLET: &str = "terra1pza7mqx904lwu8dt9zcxw3xcfqf5k5xlx8n5el"; // TODO treasury wallet(now prism)
 
 const TOKEN_CONTRACT: &str = "terra1rt0h5502et0tsx7tssl0c8psy3n5lxjvthe3jcgc9d66070zvh7qegu7rk"; // TODO token contract
 const MOON_CONTRACT: &str = "terra1ffx3j5w2sf6yqysmyyhl2d4j80wxw9k3yxe3exleyjapqccxdg7sny4j8c"; // TODO classicmoon contract
 
-const START_MINT_BY_LUNC: u64 = 1689809000 + 60 * 86400; // TODO 2 months later from the date of contract execution
-const START_MINT_BY_USTC: u64 = 1689809000 + 90 * 86400; // TODO 3 months later from the date of contract execution
+const RESERVED_DURATION_LUNC: u64 = 60 * 86400;
+const RESERVED_DURATION_USTC: u64 = 90 * 86400;
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -53,6 +53,7 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     let dynamic_info: &DynamicInfoRaw = &DynamicInfoRaw {
+        mint_start_time: _env.block.time.seconds(),
         total_lunc_burn_amount: Uint128::zero(),
         total_ustc_burn_amount: Uint128::zero(),
         total_minted_clsm_amount: Uint128::zero(),
@@ -84,7 +85,7 @@ pub fn execute(
             }
 
             let to_addr = if let Some(to_addr) = to {
-                Some(deps.api.addr_validate(&to_addr).unwrap())
+                Some(deps.api.addr_validate(&to_addr)?)
             } else {
                 None
             };
@@ -121,11 +122,7 @@ pub fn mint(
         &deps.querier,
         Addr::unchecked(CLASSICMOON_COLLECTION),
         sender.clone(),
-    )? {
-        return Err(ContractError::NoNftHolder {});
-    }
-
-    if !query_is_nft_holder(
+    )? && !query_is_nft_holder(
         &deps.querier,
         Addr::unchecked(FURY_COLLECTION),
         sender.clone(),
@@ -139,7 +136,7 @@ pub fn mint(
     let treasury_bal = query_token_balance(
         &deps.querier,
         Addr::unchecked(TOKEN_CONTRACT),
-        Addr::unchecked(TERSURY_WALLET),
+        Addr::unchecked(TREASURY_WALLET),
     )?;
 
     let burn_bal = query_token_balance(
@@ -171,9 +168,13 @@ pub fn mint(
                 Addr::unchecked(MOON_CONTRACT),
                 "uluna".to_string(),
             )?;
-
+            
+            let dynamic_info: DynamicInfoRaw = DYNAMIC_INFO.load(deps.storage)?;
+            let dynamic_info: DynamicInfo = dynamic_info.to_normal()?;
+            
             if denom == "uluna" {
-                if env.block.time.seconds() < START_MINT_BY_LUNC {
+                // TODO 2 months later from the date of contract execution
+                if env.block.time.seconds() < dynamic_info.mint_start_time + RESERVED_DURATION_LUNC {
                     return Err(ContractError::InLockTimeToMint {});
                 }
 
@@ -186,7 +187,8 @@ pub fn mint(
                     Ok(meta)
                 })?;
             } else if denom == "uusd" {
-                if env.block.time.seconds() < START_MINT_BY_USTC {
+                // TODO 3 months later from the date of contract execution
+                if env.block.time.seconds() < dynamic_info.mint_start_time + RESERVED_DURATION_USTC {
                     return Err(ContractError::InLockTimeToMint {});
                 }
 
@@ -307,7 +309,7 @@ pub fn query_is_mintable_by_lunc(
     let treasury_bal = query_token_balance(
         &deps.querier,
         Addr::unchecked(TOKEN_CONTRACT),
-        Addr::unchecked(TERSURY_WALLET),
+        Addr::unchecked(TREASURY_WALLET),
     )?;
 
     let burn_bal = query_token_balance(
@@ -322,11 +324,16 @@ pub fn query_is_mintable_by_lunc(
         return Err(ContractError::AssetLimit {});
     }
 
-    if env.block.time.seconds() > START_MINT_BY_LUNC {
+    let dynamic_info: DynamicInfoRaw = DYNAMIC_INFO.load(deps.storage)?;
+    let dynamic_info: DynamicInfo = dynamic_info.to_normal()?;
+
+    let start_mint_by_lunc = dynamic_info.mint_start_time + RESERVED_DURATION_LUNC;
+
+    if env.block.time.seconds() > start_mint_by_lunc {
         return Ok(Uint128::zero());
     }
 
-    Ok(Uint128::from(START_MINT_BY_LUNC - env.block.time.seconds())) // remain time to start
+    Ok(Uint128::from(start_mint_by_lunc - env.block.time.seconds())) // remain time to start
 }
 
 pub fn query_is_mintable_by_ustc(
@@ -352,7 +359,7 @@ pub fn query_is_mintable_by_ustc(
     let treasury_bal = query_token_balance(
         &deps.querier,
         Addr::unchecked(TOKEN_CONTRACT),
-        Addr::unchecked(TERSURY_WALLET),
+        Addr::unchecked(TREASURY_WALLET),
     )?;
 
     let burn_bal = query_token_balance(
@@ -367,11 +374,15 @@ pub fn query_is_mintable_by_ustc(
         return Err(ContractError::AssetLimit {});
     }
 
-    if env.block.time.seconds() > START_MINT_BY_USTC {
+    let dynamic_info: DynamicInfoRaw = DYNAMIC_INFO.load(deps.storage)?;
+    let dynamic_info: DynamicInfo = dynamic_info.to_normal()?;
+    let start_mint_by_ustc = dynamic_info.mint_start_time + RESERVED_DURATION_LUNC;
+
+    if env.block.time.seconds() > start_mint_by_ustc {
         return Ok(Uint128::zero());
     }
 
-    Ok(Uint128::from(START_MINT_BY_USTC - env.block.time.seconds())) // remain time to start
+    Ok(Uint128::from(start_mint_by_ustc - env.block.time.seconds())) // remain time to start
 }
 
 pub fn query_get_amount_mint(
