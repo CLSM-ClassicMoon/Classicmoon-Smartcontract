@@ -49,7 +49,7 @@ pub fn instantiate(
     };
 
     // store token info
-    let data = TokenInfo {
+    let data: TokenInfo = TokenInfo {
         name: msg.name,
         symbol: msg.symbol,
         decimals: msg.decimals,
