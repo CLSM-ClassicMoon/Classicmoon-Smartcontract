@@ -171,11 +171,9 @@ impl AssetInfo {
         pool_addr: Addr,
     ) -> StdResult<Uint128> {
         match self {
-            AssetInfo::Token { contract_addr, .. } => query_token_balance(
-                querier,
-                api.addr_validate(&contract_addr).unwrap(),
-                pool_addr,
-            ),
+            AssetInfo::Token { contract_addr, .. } => { 
+                query_token_balance(querier, api.addr_validate(&contract_addr)?, pool_addr)
+            }
             AssetInfo::NativeToken { denom, .. } => {
                 query_balance(querier, pool_addr, denom.to_string())
             }
@@ -274,6 +272,7 @@ impl AssetInfoRaw {
 // We define a custom struct for each query response
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct ClassicmoonInfo {
+    pub start_timestamp: u64,
     pub asset_infos: [AssetInfo; 2],
     pub contract_addr: String,
     pub liquidity_k_value: Uint128,
@@ -284,6 +283,7 @@ pub struct ClassicmoonInfo {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct ClassicmoonInfoRaw {
+    pub start_timestamp: u64,
     pub asset_infos: [AssetInfoRaw; 2],
     pub contract_addr: CanonicalAddr,
     pub liquidity_k_value: Uint128,
@@ -295,14 +295,15 @@ pub struct ClassicmoonInfoRaw {
 impl ClassicmoonInfoRaw {
     pub fn to_normal(&self, api: &dyn Api) -> StdResult<ClassicmoonInfo> {
         Ok(ClassicmoonInfo {
-            liquidity_k_value: self.liquidity_k_value,
-            contract_addr: api.addr_humanize(&self.contract_addr)?.to_string(),
-            vesting_epoch: self.vesting_epoch,
-            autoburn_epoch: self.autoburn_epoch,
+            start_timestamp: self.start_timestamp,
             asset_infos: [
                 self.asset_infos[0].to_normal(api)?,
                 self.asset_infos[1].to_normal(api)?,
             ],
+            contract_addr: api.addr_humanize(&self.contract_addr)?.to_string(),
+            liquidity_k_value: self.liquidity_k_value,
+            vesting_epoch: self.vesting_epoch,
+            autoburn_epoch: self.autoburn_epoch,
             asset_decimals: self.asset_decimals,
         })
     }
@@ -330,6 +331,7 @@ impl ClassicmoonInfoRaw {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct DynamicInfo {
+    pub mint_start_time: u64,
     pub total_lunc_burn_amount: Uint128,
     pub total_ustc_burn_amount: Uint128,
     pub total_minted_clsm_amount: Uint128,
@@ -337,6 +339,7 @@ pub struct DynamicInfo {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct DynamicInfoRaw {
+    pub mint_start_time: u64,
     pub total_lunc_burn_amount: Uint128,
     pub total_ustc_burn_amount: Uint128,
     pub total_minted_clsm_amount: Uint128,
@@ -345,6 +348,7 @@ pub struct DynamicInfoRaw {
 impl DynamicInfoRaw {
     pub fn to_normal(&self) -> StdResult<DynamicInfo> {
         Ok(DynamicInfo {
+            mint_start_time: self.mint_start_time,
             total_lunc_burn_amount: self.total_lunc_burn_amount,
             total_ustc_burn_amount: self.total_ustc_burn_amount,
             total_minted_clsm_amount: self.total_minted_clsm_amount,
@@ -354,6 +358,7 @@ impl DynamicInfoRaw {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct AirdropGlobal {
+    pub airdrop_start_time: u64,
     pub total_dropped_amounts: Uint128,
     pub last_drop_user: String,
     pub last_drop_timestamp: u64,
@@ -362,6 +367,7 @@ pub struct AirdropGlobal {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
 pub struct AirdropGlobalRaw {
+    pub airdrop_start_time: u64,
     pub total_dropped_amounts: Uint128,
     pub last_drop_user: CanonicalAddr,
     pub last_drop_timestamp: u64,
@@ -371,6 +377,7 @@ pub struct AirdropGlobalRaw {
 impl AirdropGlobalRaw {
     pub fn to_normal(&self, api: &dyn Api) -> StdResult<AirdropGlobal> {
         Ok(AirdropGlobal {
+            airdrop_start_time: self.airdrop_start_time,
             total_dropped_amounts: self.total_dropped_amounts,
             last_drop_user: api.addr_humanize(&self.last_drop_user)?.to_string(),
             last_drop_timestamp: self.last_drop_timestamp,
@@ -403,6 +410,7 @@ pub struct AirdropUserInfoResponse {
     pub last_drop_time: u64,
     pub next_drop_time: u64,
     pub pending_amount: Uint128,
+    pub total_pending_amount: Uint128,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, JsonSchema)]
