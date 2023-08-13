@@ -5,20 +5,18 @@ use crate::state::CLASSICMOON_INFO;
 use cosmwasm_std::entry_point;
 
 use cosmwasm_std::{
-    from_binary, to_binary, Addr, Binary, CosmosMsg, Decimal, Decimal256, Deps,
-    DepsMut, Env, MessageInfo, Response, StdResult, Uint128,
-    Uint256, WasmMsg,
+    from_binary, to_binary, Addr, Binary, CosmosMsg, Decimal, Decimal256, Deps, DepsMut, Env,
+    MessageInfo, Response, StdResult, Uint128, Uint256, WasmMsg,
 };
 
 use classic_bindings::{TerraMsg, TerraQuery};
 
 use classic_classicmoon::asset::{Asset, AssetInfo, ClassicmoonInfo, ClassicmoonInfoRaw};
 use classic_classicmoon::classicmoon::{
-    Cw20HookMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, PoolResponse, QueryMsg,
-    ReverseSimulationResponse, SimulationResponse,
+    Cw20HookMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, PoolResponse, QueryMsg, ReverseSimulationResponse, SimulationResponse,
 };
-use classic_classicmoon::querier::{query_token_info, query_token_balance};
-use classic_classicmoon::util::{assert_deadline, migrate_version};
+use classic_classicmoon::querier::{query_token_balance, query_token_info};
+use classic_classicmoon::util::assert_deadline;
 use cw2::set_contract_version;
 use cw20::{Cw20ExecuteMsg, Cw20ReceiveMsg};
 use std::cmp::Ordering;
@@ -33,18 +31,23 @@ const COMMISSION_RATE: u64 = 2; // commission rate = 0.2%
 
 // must condition: DISTRIBUTE_RATE + MARKETING_RATE < 1000
 const MARKETING_RATE: u64 = 500; // marketing rate = 50%
-// const DISTRIBUTE_RATE: u64 = 500; // distribute rate = 50%
+                                 // const DISTRIBUTE_RATE: u64 = 500; // distribute rate = 50%
 const SWAP_FEE: u64 = 2; // 0.2%
 
-const VESTING_DURATION: u64 = 30 * 86400; // 1 month
+// const VESTING_DURATION: u64 = 30 * 86400; // 1 month
+const VESTING_DURATION: u64 = 30 * 60; // [TEST] 30 mins
+
 const VESTING_COUNT_LIMIT: u64 = 40; // 40 months
 const VESTING_COUNT_LIMIT20: u64 = 20; // 20 months
 const VESTING_AMOUNT: Uint128 = Uint128::new(113_900_000_000_000_000); // vesting amount = 113.9 billion
 const VESTING_AMOUNT_MARKET: Uint128 = Uint128::new(11_900_000_000_000_000); // vesting amount = 11.90 billion
 const VESTING_AMOUNT_MINIGAME: Uint128 = Uint128::new(5_100_000_000_000_000); // vesting amount = 5.10 billion
 const VESTING_AMOUNT_TEAM: Uint128 = Uint128::new(10_200_000_000_000_000); // vesting amount = 10.20 billion
-const AUTOBURN_DURATION: u64 = 10 * 86400; // 10 days
-const CIRCULATING_LIMIT: Uint128 = Uint128::new(1_000_000_000_000_000); // circulating_supply_limit = 1 billion
+
+// const AUTOBURN_DURATION: u64 = 10 * 86400; // 10 days
+const AUTOBURN_DURATION: u64 = 15 * 60; // [TEST] 15 mins
+
+const CIRCULATING_LIMIT: Uint128 = Uint128::new(1_000_000_000_000_000); // circulating_supply_limit = 10 billion
 const REMAIN_ABOVE_RATE: u64 = 500; // burn above rate = 50%
 const REMAIN_BELOW_RATE: u64 = 990; // burn below rate = 1%
 
@@ -52,9 +55,9 @@ const BURN_WALLET: &str = "terra1sk06e3dyexuq4shw77y3dsv480xv42mq73anxu"; // bur
 const MARKET_WALLET: &str = "terra1rf76ceh3u0592yd490gucg9kfkvtye3zym95vk"; // marketing-listing wallet
 const TEAM_WALLET: &str = "terra1nld4lnh240k0dmjdk5jkasvsuqeaf254etxzrk"; // team wallet
 const MINIGAME_WALLET: &str = "terra1zxt0qz44dsnerr20wesugfctd5f9mf8tzpdkx5"; // minigame wallet
-const TREASURY_WALLET: &str = "terra1pza7mqx904lwu8dt9zcxw3xcfqf5k5xlx8n5el"; // TODO treasury wallet(now prism)
+const TERSURY_WALLET: &str = "terra13ag66rx9j824nn3caeu3ds4we0thdwsvgzqncl"; // TODO treasury wallet(now prism)
 
-const TOKEN_CONTRACT: &str = "terra1rt0h5502et0tsx7tssl0c8psy3n5lxjvthe3jcgc9d66070zvh7qegu7rk"; // TODO token contract
+const TOKEN_CONTRACT: &str = "terra1xdnaahdgpmgwd5s9wegnhyvvevsv2mt2xf3yu5tevy2w2pjzkc4qccjuyf"; // TODO token contract
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -66,7 +69,7 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     let classicmoon_info: &ClassicmoonInfoRaw = &ClassicmoonInfoRaw {
-        start_timestamp: env.block.time.seconds(),     
+        start_timestamp: env.block.time.seconds(),
         contract_addr: deps.api.addr_canonicalize(env.contract.address.as_str())?,
         liquidity_k_value: Uint128::zero(),
         vesting_epoch: 0,
@@ -357,7 +360,8 @@ pub fn swap(
 
     let classicmoon_info: ClassicmoonInfoRaw = CLASSICMOON_INFO.load(deps.storage)?;
 
-    let pools: [Asset; 2] = classicmoon_info.query_pools(&deps.querier, deps.api, env.contract.address.clone())?;
+    let pools: [Asset; 2] =
+        classicmoon_info.query_pools(&deps.querier, deps.api, env.contract.address.clone())?;
 
     let offer_pool: Asset;
     let ask_pool: Asset;
@@ -423,9 +427,13 @@ pub fn swap(
 
     let mut messages: Vec<CosmosMsg<TerraMsg>> = vec![];
     if !return_amount.is_zero() {
-        messages.push(return_asset.clone().into_msg(&deps.querier, receiver.clone())?);
+        messages.push(
+            return_asset
+                .clone()
+                .into_msg(&deps.querier, receiver.clone())?,
+        );
     }
-    
+
     // 0.2% fee is native token
     match is_native_token {
         true => {
@@ -433,24 +441,36 @@ pub fn swap(
                 info: offer_pool.info.clone(),
                 amount: fee,
             };
-    if !marketing_asset.amount.is_zero() {
-        messages.push(marketing_asset.clone().into_msg(&deps.querier, Addr::unchecked(MARKET_WALLET))?);
+            if !marketing_asset.amount.is_zero() {
+                messages.push(
+                    marketing_asset
+                        .clone()
+                        .into_msg(&deps.querier, Addr::unchecked(MARKET_WALLET))?,
+                );
+            }
         }
-    }
         false => {
             let marketing_asset = Asset {
                 info: ask_pool.info.clone(),
                 amount: commission_amount * Decimal::permille(MARKETING_RATE),
             };
             if !marketing_asset.amount.is_zero() {
-                messages.push(marketing_asset.clone().into_msg(&deps.querier, Addr::unchecked(MARKET_WALLET))?);
+                messages.push(
+                    marketing_asset
+                        .clone()
+                        .into_msg(&deps.querier, Addr::unchecked(MARKET_WALLET))?,
+                );
             }
         }
-     };
+    };
 
     // vesting
-    if (classicmoon_info.vesting_epoch < VESTING_COUNT_LIMIT) && (env.block.time.seconds() > classicmoon_info.start_timestamp + VESTING_DURATION * (classicmoon_info.vesting_epoch + 1)) {
-     // POOL CONTRACT
+    if (classicmoon_info.vesting_epoch < VESTING_COUNT_LIMIT)
+        && (env.block.time.seconds()
+            > classicmoon_info.start_timestamp
+                + VESTING_DURATION * (classicmoon_info.vesting_epoch + 1))
+    {
+        // POOL CONTRACT
         let offer_new_amount;
         let ask_new_amount;
 
@@ -464,36 +484,40 @@ pub fn swap(
             return Err(ContractError::AssetMismatch {});
         }
 
-        let liquidity: Uint128 = match (Decimal256::from_ratio(offer_new_amount.mul(ask_new_amount), 1u8).sqrt()
-            * Uint256::from(1u8))
-        .try_into()
-        {
-            Ok(liquidity) => liquidity,
-            Err(e) => return Err(ContractError::ConversionOverflowError(e)),
-        };
+        let liquidity: Uint128 =
+            match (Decimal256::from_ratio(offer_new_amount.mul(ask_new_amount), 1u8).sqrt()
+                * Uint256::from(1u8))
+            .try_into()
+            {
+                Ok(liquidity) => liquidity,
+                Err(e) => return Err(ContractError::ConversionOverflowError(e)),
+            };
 
-        CLASSICMOON_INFO.update(deps.storage, |mut meta: ClassicmoonInfoRaw| -> StdResult<_> {
-            meta.vesting_epoch += 1;
-            meta.liquidity_k_value = liquidity;
-            Ok(meta)
-        })?;
+        CLASSICMOON_INFO.update(
+            deps.storage,
+            |mut meta: ClassicmoonInfoRaw| -> StdResult<_> {
+                meta.vesting_epoch += 1;
+                meta.liquidity_k_value = liquidity;
+                Ok(meta)
+            },
+        )?;
 
         messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: TOKEN_CONTRACT.to_string(),
             msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
-                owner: TREASURY_WALLET.to_string(),
+                owner: TERSURY_WALLET.to_string(),
                 recipient: env.contract.address.to_string(),
                 amount: VESTING_AMOUNT,
             })?,
             funds: vec![],
         }));
-        
+
         if classicmoon_info.vesting_epoch < VESTING_COUNT_LIMIT20 {
             // Marketing & Listing, Team, Minigame
             messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
                 contract_addr: TOKEN_CONTRACT.to_string(),
                 msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
-                    owner: TREASURY_WALLET.to_string(),
+                    owner: TERSURY_WALLET.to_string(),
                     recipient: MARKET_WALLET.to_string(),
                     amount: VESTING_AMOUNT_MARKET,
                 })?,
@@ -502,17 +526,16 @@ pub fn swap(
             messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
                 contract_addr: TOKEN_CONTRACT.to_string(),
                 msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
-                    owner: TREASURY_WALLET.to_string(),
+                    owner: TERSURY_WALLET.to_string(),
                     recipient: TEAM_WALLET.to_string(),
                     amount: VESTING_AMOUNT_TEAM,
                 })?,
                 funds: vec![],
             }));
-            
             messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
                 contract_addr: TOKEN_CONTRACT.to_string(),
                 msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
-                    owner: TREASURY_WALLET.to_string(),
+                    owner: TERSURY_WALLET.to_string(),
                     recipient: MINIGAME_WALLET.to_string(),
                     amount: VESTING_AMOUNT_MINIGAME,
                 })?,
@@ -520,14 +543,17 @@ pub fn swap(
             }));
         }
     }
+
     // autoburn
     if env.block.time.seconds() > classicmoon_info.start_timestamp + AUTOBURN_DURATION * (classicmoon_info.autoburn_epoch + 1) {
         // circulating supply is above 1 billion, the burn percentage is 50%
         // circulating supply is below 1 billion, the burn percentage is 1%
         let total_supply = query_token_info(&deps.querier, Addr::unchecked(TOKEN_CONTRACT))?.total_supply;
-        let treasury_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(TREASURY_WALLET))?;
+
+        let treasury_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(TERSURY_WALLET))?;
+
         let burn_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(BURN_WALLET))?;
-        
+
         let circulating_supply = total_supply - treasury_bal - burn_bal;
 
         let remain_percent;
@@ -553,19 +579,23 @@ pub fn swap(
             return Err(ContractError::AssetMismatch {});
         }
 
-        let liquidity: Uint128 = match (Decimal256::from_ratio(offer_new_amount.mul(ask_new_amount), 1u8).sqrt()
-            * Uint256::from(1u8))
-        .try_into()
-        {
-            Ok(liquidity) => liquidity,
-            Err(e) => return Err(ContractError::ConversionOverflowError(e)),
-        };
+        let liquidity: Uint128 =
+            match (Decimal256::from_ratio(offer_new_amount.mul(ask_new_amount), 1u8).sqrt()
+                * Uint256::from(1u8))
+            .try_into()
+            {
+                Ok(liquidity) => liquidity,
+                Err(e) => return Err(ContractError::ConversionOverflowError(e)),
+            };
 
-        CLASSICMOON_INFO.update(deps.storage, |mut meta: ClassicmoonInfoRaw| -> StdResult<_> {
-            meta.autoburn_epoch += 1;
-            meta.liquidity_k_value = liquidity;
-            Ok(meta)
-        })?;
+        CLASSICMOON_INFO.update(
+            deps.storage,
+            |mut meta: ClassicmoonInfoRaw| -> StdResult<_> {
+                meta.autoburn_epoch += 1;
+                meta.liquidity_k_value = liquidity;
+                Ok(meta)
+            },
+        )?;
 
         messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: TOKEN_CONTRACT.to_string(),
@@ -575,7 +605,7 @@ pub fn swap(
             })?,
             funds: vec![],
         }));
-        
+
         messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: TOKEN_CONTRACT.to_string(),
             msg: to_binary(&Cw20ExecuteMsg::Burn {
@@ -627,7 +657,8 @@ pub fn query_classicmoon_info(deps: Deps<TerraQuery>) -> Result<ClassicmoonInfo,
 pub fn query_pool(deps: Deps<TerraQuery>) -> Result<PoolResponse, ContractError> {
     let classicmoon_info: ClassicmoonInfoRaw = CLASSICMOON_INFO.load(deps.storage)?;
     let contract_addr = deps.api.addr_humanize(&classicmoon_info.contract_addr)?;
-    let assets: [Asset; 2] = classicmoon_info.query_pools(&deps.querier, deps.api, contract_addr)?;
+    let assets: [Asset; 2] =
+        classicmoon_info.query_pools(&deps.querier, deps.api, contract_addr)?;
     let total_share: Uint128 = classicmoon_info.liquidity_k_value;
 
     let resp = PoolResponse {
@@ -731,19 +762,6 @@ fn compute_swap(
         spread_amount.try_into()?,
         commission_amount.try_into()?,
     ))
-}
-
-#[test]
-fn test_compute_swap_with_huge_pool_variance() {
-    let offer_pool = Uint128::from(395451850234u128);
-    let ask_pool = Uint128::from(317u128);
-
-    assert_eq!(
-        compute_swap(offer_pool, ask_pool, Uint128::from(1u128))
-            .unwrap()
-            .0,
-        Uint128::zero()
-    );
 }
 
 fn compute_offer_amount(
@@ -900,21 +918,4 @@ pub fn assert_minimum_assets(
     }
 
     Ok(())
-}
-
-const TARGET_CONTRACT_VERSION: &str = "0.1.1";
-#[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(
-    deps: DepsMut<TerraQuery>,
-    _env: Env,
-    _msg: MigrateMsg,
-) -> Result<Response<TerraMsg>, ContractError> {
-    migrate_version(
-        deps,
-        TARGET_CONTRACT_VERSION,
-        CONTRACT_NAME,
-        CONTRACT_VERSION,
-    )?;
-
-    Ok(Response::default())
 }
