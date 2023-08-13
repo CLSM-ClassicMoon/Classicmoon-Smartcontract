@@ -24,14 +24,15 @@ const CONTRACT_NAME: &str = "crates.io:airdrop";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const NFT_COLLECTION: &str = "terra15tuwx3r2peluez6sh4yauk4ztry5dg5els4rye534v9n8su5gacs259p77"; // classicmoon nft collection
-const AIRDROP_DURATION: u64 = 30 * 86400; // 1 month
+
+// const AIRDROP_DURATION: u64 = 30 * 86400; // 1 month
+const AIRDROP_DURATION: u64 = 15 * 60; // 1 month - [TEST] 15 mins
 const AIRDROP_AMOUNT: Uint128 = Uint128::new(5_100_000_000_000); // airdrop amount per nft is 5.1 million
-// const AIRDROP_COUNT_LIMIT: u64 = 20; // 20 months
+                                                                 // const AIRDROP_COUNT_LIMIT: u64 = 20; // 20 months
 const AIRDROP_LIMIT_PER_NFT: Uint128 = Uint128::new(20 * 5_100_000_000_000); // total airdrop amount per nft is 20 * 5.1 million
 
-const TERSURY_WALLET: &str = "terra1675g95dpcxulmwgyc0hvf66uxn7vcrr5az2vuk"; // TODO treasury wallet(now prism)
-const TOKEN_CONTRACT: &str = "terra1rt0h5502et0tsx7tssl0c8psy3n5lxjvthe3jcgc9d66070zvh7qegu7rk"; // TODO token contract
-const AIRDROP_START_TIME: u64 = 1689809000; // TODO timestamp of contract execution
+const TREASURY_WALLET: &str = "terra1pza7mqx904lwu8dt9zcxw3xcfqf5k5xlx8n5el"; // TODO treasury wallet(now prism)
+const TOKEN_CONTRACT: &str = "terra1xdnaahdgpmgwd5s9wegnhyvvevsv2mt2xf3yu5tevy2w2pjzkc4qccjuyf"; // TODO token contract
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -43,6 +44,7 @@ pub fn instantiate(
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     let airdrop_config: &AirdropGlobalRaw = &AirdropGlobalRaw {
+        airdrop_start_time: env.block.time.seconds(),
         total_dropped_amounts: Uint128::zero(),
         last_drop_user: deps.api.addr_canonicalize(env.contract.address.as_str())?,
         last_drop_timestamp: 0,
@@ -87,15 +89,28 @@ pub fn airdrop(
         return Err(ContractError::NoNftHolder {});
     }
 
+    let airdrop_config: AirdropGlobalRaw = AIRDROP_GLOBAL.load(deps.storage)?;
+    let airdrop_config: AirdropGlobal = airdrop_config.to_normal(deps.api)?;
+
     let current_time = env.block.time.seconds();
     let mut airdrop_amount = Uint128::zero();
     for nft_id in nft_list {
-        let mut nft_info: AirdropNftInfo = AIRDROP_NFT_INFO.load(deps.storage, nft_id.clone())?;
+        let mut nft_info: AirdropNftInfo;
+        if AIRDROP_NFT_INFO.has(deps.storage, nft_id.clone()) {
+            nft_info = AIRDROP_NFT_INFO.load(deps.storage, nft_id.clone())?;
+        } else {
+            nft_info = AirdropNftInfo {
+                dropped_amount: Uint128::zero(),
+                last_drop_amount: Uint128::zero(),
+                last_drop_time: 0,
+            };
+        }
+
         let check_time;
-        if nft_info.last_drop_time > AIRDROP_START_TIME {
+        if nft_info.last_drop_time > airdrop_config.airdrop_start_time {
             check_time = nft_info.last_drop_time;
         } else {
-            check_time = AIRDROP_START_TIME
+            check_time = airdrop_config.airdrop_start_time;
         }
         if current_time > (check_time + AIRDROP_DURATION) {
             let pending_count = (current_time - check_time) / AIRDROP_DURATION;
@@ -126,7 +141,16 @@ pub fn airdrop(
             Ok(meta)
         })?;
 
-        let mut user_info = AIRDROP_USER_INFO.load(deps.storage, sender.clone())?;
+        let mut user_info;
+        if AIRDROP_USER_INFO.has(deps.storage, sender.clone()) {
+            user_info = AIRDROP_USER_INFO.load(deps.storage, sender.clone())?;
+        } else {
+            user_info = AirdropUserInfo {
+                dropped_amount: Uint128::zero(),
+                last_drop_amount: Uint128::zero(),
+                last_drop_time: 0,
+            };
+        }
         user_info.dropped_amount += airdrop_amount;
         user_info.last_drop_amount = airdrop_amount;
         user_info.last_drop_time = current_time;
@@ -135,7 +159,7 @@ pub fn airdrop(
         messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
             contract_addr: TOKEN_CONTRACT.to_string(),
             msg: to_binary(&Cw20ExecuteMsg::TransferFrom {
-                owner: TERSURY_WALLET.to_string(),
+                owner: TREASURY_WALLET.to_string(),
                 recipient: sender.to_string(),
                 amount: airdrop_amount,
             })?,
@@ -176,9 +200,16 @@ pub fn query_airdrop_nft_info(
     deps: Deps<TerraQuery>,
     token_id: String,
 ) -> Result<AirdropNftInfo, ContractError> {
-    let airdrop_nft_info: AirdropNftInfo = AIRDROP_NFT_INFO.load(deps.storage, token_id)?;
-
-    Ok(airdrop_nft_info)
+    let tid = token_id.clone();
+    if AIRDROP_NFT_INFO.has(deps.storage, token_id) {
+        Ok(AIRDROP_NFT_INFO.load(deps.storage, tid)?)
+    } else {
+        Ok(AirdropNftInfo {
+            dropped_amount: Uint128::zero(),
+            last_drop_amount: Uint128::zero(),
+            last_drop_time: 0,
+        })
+    }
 }
 
 pub fn query_airdrop_user_info(
@@ -186,8 +217,16 @@ pub fn query_airdrop_user_info(
     env: Env,
     account: Addr,
 ) -> Result<AirdropUserInfoResponse, ContractError> {
-    let airdrop_user_info: AirdropUserInfo =
-        AIRDROP_USER_INFO.load(deps.storage, account.clone())?;
+    let airdrop_user_info: AirdropUserInfo;
+    if AIRDROP_USER_INFO.has(deps.storage, account.clone()) {
+        airdrop_user_info = AIRDROP_USER_INFO.load(deps.storage, account.clone())?;
+    } else {
+        airdrop_user_info = AirdropUserInfo {
+            dropped_amount: Uint128::zero(),
+            last_drop_amount: Uint128::zero(),
+            last_drop_time: 0,
+        };
+    }
 
     let nft_list = query_nft_list(&deps.querier, Addr::unchecked(NFT_COLLECTION), account)?.tokens;
 
@@ -195,15 +234,27 @@ pub fn query_airdrop_user_info(
         return Err(ContractError::NoNftHolder {});
     }
 
+    let airdrop_config: AirdropGlobalRaw = AIRDROP_GLOBAL.load(deps.storage)?;
+
     let current_time = env.block.time.seconds();
-    let mut total_pending_amount = Uint128::zero();
+    let mut total_pending_amount: Uint128 = Uint128::zero();
     for nft_id in nft_list.clone() {
-        let nft_info: AirdropNftInfo = AIRDROP_NFT_INFO.load(deps.storage, nft_id)?;
+        let nft_info: AirdropNftInfo;
+        if AIRDROP_NFT_INFO.has(deps.storage, nft_id.clone()) {
+            nft_info = AIRDROP_NFT_INFO.load(deps.storage, nft_id)?;
+        } else {
+            nft_info = AirdropNftInfo {
+                dropped_amount: Uint128::zero(),
+                last_drop_amount: Uint128::zero(),
+                last_drop_time: 0,
+            };
+        }
+
         let check_time;
-        if nft_info.last_drop_time > AIRDROP_START_TIME {
+        if nft_info.last_drop_time > airdrop_config.airdrop_start_time {
             check_time = nft_info.last_drop_time;
         } else {
-            check_time = AIRDROP_START_TIME
+            check_time = airdrop_config.airdrop_start_time;
         }
         if current_time > (check_time + AIRDROP_DURATION) {
             let pending_count = (current_time - check_time) / AIRDROP_DURATION;
@@ -221,20 +272,32 @@ pub fn query_airdrop_user_info(
         next_drop_time = env.block.time.seconds();
     } else {
         for nft_id in nft_list.clone() {
-            let nft_info: AirdropNftInfo = AIRDROP_NFT_INFO.load(deps.storage, nft_id)?;
-            if nft_info.last_drop_time < AIRDROP_START_TIME {
-                next_drop_time = AIRDROP_START_TIME;
+            let nft_info: AirdropNftInfo;
+            if AIRDROP_NFT_INFO.has(deps.storage, nft_id.clone()) {
+                nft_info = AIRDROP_NFT_INFO.load(deps.storage, nft_id)?;
+            } else {
+                nft_info = AirdropNftInfo {
+                    dropped_amount: Uint128::zero(),
+                    last_drop_amount: Uint128::zero(),
+                    last_drop_time: 0,
+                }
+            }
+
+            if nft_info.last_drop_time < airdrop_config.airdrop_start_time {
+                next_drop_time = airdrop_config.airdrop_start_time;
             } else if next_drop_time > (nft_info.last_drop_time + AIRDROP_DURATION) {
                 next_drop_time = nft_info.last_drop_time + AIRDROP_DURATION;
             }
-        }
 
-        for nft_id in nft_list {
-            let nft_info: AirdropNftInfo = AIRDROP_NFT_INFO.load(deps.storage, nft_id)?;
             if !(next_drop_time >= nft_info.last_drop_time + AIRDROP_DURATION) {
                 total_pending_amount += AIRDROP_AMOUNT;
             }
         }
+    }
+
+    let mut nft_list_len: Uint128 = Uint128::zero();
+    for _nft_info in nft_list {
+        nft_list_len += Uint128::new(1u128);
     }
 
     Ok(AirdropUserInfoResponse {
@@ -243,5 +306,7 @@ pub fn query_airdrop_user_info(
         last_drop_time: airdrop_user_info.last_drop_time,
         next_drop_time,
         pending_amount: total_pending_amount,
+        total_pending_amount: AIRDROP_LIMIT_PER_NFT * nft_list_len
+            - airdrop_user_info.dropped_amount,
     })
 }
