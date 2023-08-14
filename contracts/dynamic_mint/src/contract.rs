@@ -145,7 +145,7 @@ pub fn mint(
         Addr::unchecked(BURN_WALLET),
     )?;
 
-    let circulating_supply = total_supply - treasury_bal - burn_bal;
+    let circulating_supply = total_supply - burn_bal;
 
     if circulating_supply > CIRCULATING_LIMIT {
         return Err(ContractError::AssetLimit {});
@@ -318,7 +318,7 @@ pub fn query_is_mintable_by_lunc(
         Addr::unchecked(BURN_WALLET),
     )?;
 
-    let circulating_supply = total_supply - treasury_bal - burn_bal;
+    let circulating_supply = total_supply - burn_bal;
 
     if circulating_supply > CIRCULATING_LIMIT {
         return Err(ContractError::AssetLimit {});
@@ -368,7 +368,7 @@ pub fn query_is_mintable_by_ustc(
         Addr::unchecked(BURN_WALLET),
     )?;
 
-    let circulating_supply = total_supply - treasury_bal - burn_bal;
+    let circulating_supply = total_supply - burn_bal;
 
     if circulating_supply > CIRCULATING_LIMIT {
         return Err(ContractError::AssetLimit {});
