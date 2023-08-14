@@ -526,7 +526,7 @@ pub fn swap(
         let treasury_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(TREASURY_WALLET))?;
         let burn_bal = query_token_balance(&deps.querier, Addr::unchecked(TOKEN_CONTRACT), Addr::unchecked(BURN_WALLET))?;
         
-        let circulating_supply = total_supply - treasury_bal - burn_bal;
+        let circulating_supply = total_supply - burn_bal;
 
         let remain_percent;
         if circulating_supply < CIRCULATING_LIMIT {
